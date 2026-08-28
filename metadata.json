@@ -1,0 +1,6 @@
+{
+  "name": "The Black Archives",
+  "description": "Premium on-device local AI image generation workspace and classified research terminal for recovering visual artifacts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

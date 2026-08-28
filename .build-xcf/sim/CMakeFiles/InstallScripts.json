@@ -1,0 +1,15 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/sim/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/sim/ggml/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/sim/ggml/src/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/sim/ggml/src/ggml-cpu/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/sim/ggml/src/ggml-blas/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/sim/ggml/src/ggml-metal/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/sim/thirdparty/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/sim/thirdparty/libwebp/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/sim/thirdparty/libwebm/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

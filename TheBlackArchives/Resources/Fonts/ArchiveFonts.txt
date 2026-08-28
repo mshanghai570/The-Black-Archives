@@ -1,0 +1,13 @@
+# Custom Fonts Setup Guide
+
+To load these fonts into your Xcode project:
+
+1. Drag-and-drop your `.ttf` or `.otf` font files into the **Resources/Fonts/** folder in Xcode.
+2. Ensure you check **"Add to targets"** for your main build target.
+3. Open your **Info.plist** file.
+4. Add the key **"Fonts provided by application"** (or `UIAppFonts`) as an array.
+5. Add the filenames exactly as they are on disk:
+   - `Cinzel-Regular.ttf`
+   - `Inter-Regular.ttf`
+   - `CourierPrime-Regular.ttf`
+6. Verify your build phases bundle copies the resource fonts appropriately.

@@ -1,0 +1,15 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/device/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/device/ggml/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/device/ggml/src/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/device/ggml/src/ggml-cpu/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/device/ggml/src/ggml-blas/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/device/ggml/src/ggml-metal/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/device/thirdparty/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/device/thirdparty/libwebp/cmake_install.cmake",
+		"/Users/michaelshingara/Downloads/the-black-archives/.build-xcf/device/thirdparty/libwebm/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
