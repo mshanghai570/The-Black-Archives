@@ -56,14 +56,40 @@ struct HomeView: View {
     }
 }
 
+private enum OutputAspectRatio: String, CaseIterable, Identifiable {
+    case square = "1:1"
+    case portrait = "2:3"
+    case landscape = "3:2"
+    case wide = "16:9"
+
+    var id: String { rawValue }
+    var label: String { rawValue }
+
+    func dimensions(base: Int) -> (width: Int, height: Int) {
+        switch self {
+        case .square: return (base, base)
+        case .portrait: return (base, max(64, Int(Double(base) * 1.5)))
+        case .landscape: return (max(64, Int(Double(base) * 1.5)), base)
+        case .wide: return (max(64, Int(Double(base) * 1.777)), base)
+        }
+    }
+}
+
 struct GeneratorTabView: View {
     @EnvironmentObject var homeVM: HomeViewModel
     @EnvironmentObject var repoVM: RepositoryViewModel
     @EnvironmentObject var archiveVM: ArchiveViewModel
+    @EnvironmentObject var presetStore: PromptPresetStore
     @Binding var activeTab: Int
     @State private var prompt = ""
+    @State private var negativePrompt = Constants.defaultNegativePrompt
     @State private var steps = 20
     @State private var cfgScale: Double = 7.0
+    @State private var aspectRatio: OutputAspectRatio = .square
+    @State private var seedText = ""
+    @State private var lockSeed = false
+    @State private var presetTitle = ""
+    @State private var showSavePreset = false
     @State private var showDocumentPicker = false
     @FocusState private var isPromptFocused: Bool
     
@@ -199,9 +225,71 @@ struct GeneratorTabView: View {
                 // Prompt + Steps + Generate
                 ArchiveCard(title: "Input Prompts", subtitle: "Latent Sourcing") {
                     VStack(spacing: 12) {
-                        ArchiveTextField(placeholder: "ENTER ARCHIVE SOURCING PROMPT...", text: $prompt)
-                            .focused($isPromptFocused)
-                        
+                        HStack(spacing: 8) {
+                            ArchiveTextField(placeholder: "ENTER ARCHIVE SOURCING PROMPT...", text: $prompt)
+                                .focused($isPromptFocused)
+                            Menu {
+                                ForEach(presetStore.allPresets) { preset in
+                                    Button(preset.title) { applyPreset(preset) }
+                                }
+                            } label: {
+                                Image(systemName: "text.book.closed")
+                                    .foregroundColor(ArchiveColors.bronze)
+                                    .frame(width: 36, height: 36)
+                                    .background(ArchiveColors.bronze.opacity(0.12))
+                                    .cornerRadius(6)
+                            }
+                            .accessibilityLabel("Prompt presets")
+                        }
+
+                        HStack {
+                            Text("PROMPT LIBRARY")
+                                .font(ArchiveTypography.courier(size: 8))
+                                .foregroundColor(ArchiveColors.textMuted)
+                            Spacer()
+                            Button("SAVE AS PRESET") { showSavePreset = true }
+                                .font(ArchiveTypography.courier(size: 8))
+                                .foregroundColor(ArchiveColors.bronze)
+                                .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+
+                        DisclosureGroup {
+                            VStack(spacing: 12) {
+                                ArchiveTextField(placeholder: "NEGATIVE PROMPT (OPTIONAL)...", text: $negativePrompt)
+                                HStack {
+                                    Text("ASPECT")
+                                        .font(ArchiveTypography.courier(size: 8))
+                                        .foregroundColor(ArchiveColors.textMuted)
+                                    Spacer()
+                                    Picker("Aspect ratio", selection: $aspectRatio) {
+                                        ForEach(OutputAspectRatio.allCases) { ratio in
+                                            Text(ratio.label).tag(ratio)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .tint(ArchiveColors.bronze)
+                                }
+                                HStack {
+                                    Text("SEED")
+                                        .font(ArchiveTypography.courier(size: 8))
+                                        .foregroundColor(ArchiveColors.textMuted)
+                                    TextField("Random", text: $seedText)
+                                        .keyboardType(.numberPad)
+                                        .multilineTextAlignment(.trailing)
+                                        .font(ArchiveTypography.courier(size: 9))
+                                        .foregroundColor(ArchiveColors.text)
+                                    Toggle("Lock", isOn: $lockSeed)
+                                        .labelsHidden()
+                                        .tint(ArchiveColors.bronze)
+                                }
+                            }
+                            .padding(.top, 8)
+                        } label: {
+                            Text("ADVANCED CONTROLS")
+                                .font(ArchiveTypography.courier(size: 8))
+                                .foregroundColor(ArchiveColors.bronze)
+                        }
+
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text("STEPS")
@@ -386,6 +474,16 @@ struct GeneratorTabView: View {
         .onChange(of: repoVM.selectedModelId) { _, _ in
             applyModelDefaults()
         }
+        .alert("Save Prompt Preset", isPresented: $showSavePreset) {
+            TextField("Preset name", text: $presetTitle)
+            Button("Save") {
+                presetStore.save(title: presetTitle, prompt: prompt, negativePrompt: negativePrompt, steps: steps, cfgScale: cfgScale)
+                presetTitle = ""
+            }
+            Button("Cancel", role: .cancel) { presetTitle = "" }
+        } message: {
+            Text("Keep this prompt and its generation settings in your local library.")
+        }
         .sheet(isPresented: $showDocumentPicker) {
             LocalModelImporter(isPresented: $showDocumentPicker) { urls in
                 guard let url = urls.first else { return }
@@ -406,11 +504,17 @@ struct GeneratorTabView: View {
         
         Task {
             do {
+                let dimensions = aspectRatio.dimensions(base: model.recommendedSize ?? 512)
+                let lockedSeed = lockSeed ? UInt64(seedText) : nil
                 try await homeVM.triggerGeneration(
                     prompt: prompt,
+                    negativePrompt: negativePrompt,
                     model: model,
                     steps: steps,
-                    cfgScale: Float(cfgScale)
+                    cfgScale: Float(cfgScale),
+                    width: dimensions.width,
+                    height: dimensions.height,
+                    seed: lockedSeed
                 )
             } catch {
                 homeVM.errorMessage = error.localizedDescription
@@ -421,6 +525,13 @@ struct GeneratorTabView: View {
     /// Applies the selected model's recommended steps/CFG when the active
     /// model changes, so the sliders always start at sensible values for the
     /// architecture in use (turbo ≈ 1-4 steps / CFG 1, full ≈ 25-30 / CFG 7).
+    private func applyPreset(_ preset: PromptPreset) {
+        prompt = preset.promptText
+        negativePrompt = preset.negativePrompt
+        steps = preset.steps
+        cfgScale = preset.cfgScale
+    }
+
     private func applyModelDefaults() {
         guard let model = repoVM.selectedModel else { return }
         if let defaultSteps = model.defaultSteps {

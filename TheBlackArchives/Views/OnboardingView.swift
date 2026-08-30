@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct OnboardingView: View {
-    @State private var hasAccepted = false
+    @AppStorage("blackArchives.hasAcceptedOnboarding") private var hasAccepted = false
     @EnvironmentObject var homeVM: HomeViewModel
     
     var body: some View {
@@ -35,7 +35,7 @@ struct OnboardingView: View {
                 Spacer()
                 
                 ArchiveButton(title: "Initialize Secure Core", isAccent: true) {
-                    withAnimation {
+                    withAnimation(.easeInOut(duration: 0.35)) {
                         hasAccepted = true
                     }
                 }

@@ -6,6 +6,7 @@ struct TheBlackArchivesApp: App {
     @StateObject private var repoVM = RepositoryViewModel()
     @StateObject private var settingsVM = SettingsViewModel()
     @StateObject private var archiveVM = ArchiveViewModel()
+    @StateObject private var presetStore = PromptPresetStore()
 
     var body: some Scene {
         WindowGroup {
@@ -14,6 +15,7 @@ struct TheBlackArchivesApp: App {
                 .environmentObject(repoVM)
                 .environmentObject(settingsVM)
                 .environmentObject(archiveVM)
+                .environmentObject(presetStore)
         }
     }
 }

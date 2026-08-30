@@ -54,9 +54,12 @@ public final class HomeViewModel: ObservableObject {
     @MainActor
     public func triggerGeneration(
         prompt: String,
+        negativePrompt: String = Constants.defaultNegativePrompt,
         model: AIModel,
         steps: Int = 20,
         cfgScale: Float? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
         seed: UInt64? = nil
     ) async throws {
         // Re-entrancy guard: the Generate button is disabled while running,
@@ -77,11 +80,13 @@ public final class HomeViewModel: ObservableObject {
         let actualSeed = seed ?? UInt64.random(in: 0...UInt64.max)
         let resolvedCfg = cfgScale ?? model.defaultCfgScale ?? 1.0
         let dimension = model.recommendedSize ?? 512
+        let outputWidth = width ?? dimension
+        let outputHeight = height ?? dimension
         
         self.logs.append("[Core] Seed: \(actualSeed)")
         self.logs.append("[Core] Steps: \(steps)")
         self.logs.append("[Core] CFG: \(String(format: "%.1f", resolvedCfg))")
-        self.logs.append("[Core] Size: \(dimension)x\(dimension)")
+        self.logs.append("[Core] Size: \(outputWidth)x\(outputHeight)")
         self.logs.append("[Core] Prompt: \(prompt.prefix(60))...")
         
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -96,7 +101,7 @@ public final class HomeViewModel: ObservableObject {
                     prompt: prompt,
                     steps: steps,
                     cfgScale: resolvedCfg,
-                    size: CGSize(width: dimension, height: dimension),
+                    size: CGSize(width: outputWidth, height: outputHeight),
                     seed: actualSeed,
                     progressHandler: { fraction, message in
                         Task { @MainActor in
@@ -122,9 +127,9 @@ public final class HomeViewModel: ObservableObject {
             // clearly labeled so it is never mistaken for a real generation.
             cgImage = ProceduralImageGenerator.shared.generate(
                 prompt: prompt,
-                negativePrompt: Constants.defaultNegativePrompt,
+                negativePrompt: negativePrompt,
                 steps: steps,
-                size: CGSize(width: dimension, height: dimension),
+                size: CGSize(width: outputWidth, height: outputHeight),
                 seed: actualSeed
             ) { fraction, message in
                 Task { @MainActor in
