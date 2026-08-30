@@ -6,7 +6,6 @@ struct RepositoryView: View {
     @Binding var activeTab: Int
     @State private var searchQuery = ""
     @State private var showDocumentPicker = false
-    @State private var selectedFormat: AIModel.ModelFormat = .coreML
     @State private var lastDragPosition: CGFloat = 0
     
     var body: some View {
@@ -28,19 +27,9 @@ struct RepositoryView: View {
                 ArchiveTextField(placeholder: "Search HuggingFace hubs...", text: $searchQuery)
                 
                 Menu {
-                    Picker("Format", selection: $selectedFormat) {
-                        Text("CoreML (.mlmodelc/.mlpackage)").tag(AIModel.ModelFormat.coreML)
-                        Text("MLX (.safetensors)").tag(AIModel.ModelFormat.mlx)
-                        Text("GGUF (.gguf)").tag(AIModel.ModelFormat.gguf)
-                        Text("SafeTensor (.safetensors)").tag(AIModel.ModelFormat.safetensors)
-                        Divider()
-                        Text("LoRA (.safetensors/.pt)").tag(AIModel.ModelFormat.lora)
-                        Text("VAE (.safetensors/.pt)").tag(AIModel.ModelFormat.vae)
-                        Text("CLIP (.safetensors/.bin)").tag(AIModel.ModelFormat.clip)
-                        Text("Tokenizer (.json/.txt/.model)").tag(AIModel.ModelFormat.tokenizer)
-                    }
+                    Text("Format detected automatically")
                     Divider()
-                    Button("Import from Files") { showDocumentPicker = true }
+                    Button("Import web-downloaded generator") { showDocumentPicker = true }
                 } label: {
                     Image(systemName: ArchiveIcons.download)
                         .font(.system(size: 16, weight: .medium))
@@ -57,7 +46,7 @@ struct RepositoryView: View {
                 Button(action: { showDocumentPicker = true }) {
                     HStack {
                         Image(systemName: "folder.badge.plus")
-                        Text("IMPORT LOCAL MODEL FILE")
+                        Text("IMPORT DOWNLOADED GENERATOR")
                     }
                     .font(ArchiveTypography.courier(size: 9))
                     .fontWeight(.bold)
@@ -76,9 +65,32 @@ struct RepositoryView: View {
             }
             .padding(.horizontal)
             .padding(.top, 4)
-            
+
+            Text("Import an unzipped generator folder, a checkpoint file, or select its companion files together. ZIP downloads can be expanded in Files first.")
+                .font(ArchiveTypography.courier(size: 8))
+                .foregroundColor(ArchiveColors.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+
             // Error banners — search and download failures were previously
             // swallowed; surface them so the user knows why nothing happened.
+            if let message = repoVM.importStatusMessage {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(ArchiveColors.green)
+                        .font(.system(size: 12))
+                    Text(message)
+                        .font(ArchiveTypography.courier(size: 8.5))
+                        .foregroundColor(ArchiveColors.green)
+                    Spacer()
+                }
+                .padding(10)
+                .background(ArchiveColors.green.opacity(0.08))
+                .cornerRadius(6)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(ArchiveColors.green.opacity(0.3), lineWidth: 1))
+                .padding(.horizontal)
+            }
+
             if let error = repoVM.downloadErrorMessage {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: ArchiveIcons.warning)
@@ -199,12 +211,14 @@ struct RepositoryView: View {
             )
             .sheet(isPresented: $showDocumentPicker) {
                 LocalModelImporter(isPresented: $showDocumentPicker) { urls in
-                    guard let url = urls.first else { return }
-                    // Start accessing the security-scoped resource (Files app).
-                    let accessed = url.startAccessingSecurityScopedResource()
-                    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                    repoVM.importLocalModel(url: url, format: selectedFormat)
+                    // Keep every selected companion file. This is important for
+                    // web downloads that separate the checkpoint, VAE, and
+                    // text encoder into a single generator folder.
+                    repoVM.importLocalModels(urls: urls, format: nil)
                 }
+            }
+            .onChange(of: repoVM.downloadErrorMessage) { _, newValue in
+                if newValue != nil { repoVM.importStatusMessage = nil }
             }
             .onChange(of: searchQuery) { oldValue, newValue in
                 repoVM.searchHuggingFace(query: newValue)

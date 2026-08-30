@@ -13,6 +13,7 @@ public final class RepositoryViewModel: ObservableObject {
     /// Human-readable stage of the in-flight download (manifest → file →
     /// validation) so the UI can show where a download is stuck.
     @Published public var downloadStatus: String = ""
+    @Published public var importStatusMessage: String?
     
     private let hfService = HuggingFaceService()
     private var searchTask: Task<Void, Never>?
@@ -265,46 +266,97 @@ public final class RepositoryViewModel: ObservableObject {
         }
     }
     
-    /// Imports a model from an arbitrary local URL (a single weight file or a
-    /// whole model folder such as `.mlmodelc` / `.mlpackage`). The destination
-    /// copy is recursive so packaged model directories are preserved intact.
-    public func importLocalModel(url: URL, format: AIModel.ModelFormat? = nil) {
-        let resolvedFormat = format ?? Self.formatForURL(url)
-        let id = url.deletingPathExtension().lastPathComponent
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-        let name = url.deletingPathExtension().lastPathComponent
-        let fileSize = Self.sizeOfItem(at: url)
+    /// Imports one or more model items from Files. This supports a single
+    /// checkpoint, a downloaded generator folder, or a multi-file selection
+    /// containing a checkpoint plus VAE/text encoder/tokenizer companions.
+    /// Nothing is registered until the copied package passes structural checks.
+    @MainActor
+    public func importLocalModels(urls: [URL], format: AIModel.ModelFormat? = nil) {
+        guard !urls.isEmpty else { return }
+        importStatusMessage = "Inspecting downloaded generator…"
+        downloadErrorMessage = nil
+        let first = urls[0]
+        let baseName = first.hasDirectoryPath
+            ? first.lastPathComponent
+            : first.deletingPathExtension().lastPathComponent
+        let name = baseName.isEmpty ? "Imported Generator" : baseName
+        let idBase = name.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let id = idBase.isEmpty ? "imported-generator" : idBase
+        let resolvedFormat = format ?? Self.formatForURL(first)
+        let destination = ModelManager.shared.getLocalModelURL(id: id)
+        let staging = destination.deletingLastPathComponent().appendingPathComponent(".import-\(id)-\(UUID().uuidString)")
 
-        if !models.contains(where: { $0.id == id }) {
-            let newModel = AIModel(
-                id: id,
-                name: name,
-                author: "Local Import",
-                description: "Imported from \(url.lastPathComponent)",
-                fileSizeBytes: Int64(fileSize),
-                format: resolvedFormat,
-                isInstalled: true,
-                isLocalCatalog: true
-            )
-            models.append(newModel)
-        } else if let idx = models.firstIndex(where: { $0.id == id }) {
-            models[idx].isInstalled = true
-        }
-
-        let destURL = ModelManager.shared.getLocalModelURL(id: id)
-        try? FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
-        let destItem = destURL.appendingPathComponent(url.lastPathComponent)
-        try? FileManager.default.removeItem(at: destItem)
         do {
-            try FileManager.default.copyItem(at: url, to: destItem)
-        } catch {
-            Logger.error("Failed to import model file: \(error.localizedDescription)")
-        }
+            let fm = FileManager.default
+            try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+            for source in urls {
+                let accessed = source.startAccessingSecurityScopedResource()
+                defer { if accessed { source.stopAccessingSecurityScopedResource() } }
+                try Self.copyImportItem(source, into: staging, fileManager: fm)
+            }
 
-        selectModel(id: id)
-        saveModels()
-        Logger.info("Imported model: \(name) (\(resolvedFormat.rawValue))")
+            guard ModelManager.hasUsableModelFiles(at: staging, fileManager: fm) else {
+                throw NSError(domain: "RepositoryViewModel", code: -21, userInfo: [NSLocalizedDescriptionKey: "No usable generator weights were found. Choose a .safetensors, .gguf, .ckpt, Core ML package, or a folder containing one."])
+            }
+            try? fm.removeItem(at: destination)
+            try fm.moveItem(at: staging, to: destination)
+
+            let fileSize = Self.sizeOfItem(at: destination)
+            if let idx = models.firstIndex(where: { $0.id == id }) {
+                models[idx].isInstalled = true
+            } else {
+                models.append(AIModel(
+                    id: id,
+                    name: name,
+                    author: "Local Import",
+                    description: "Imported from web download or Files",
+                    fileSizeBytes: Int64(fileSize),
+                    format: resolvedFormat,
+                    isInstalled: true,
+                    isLocalCatalog: true
+                ))
+            }
+            selectModel(id: id)
+            saveModels()
+            importStatusMessage = "Imported \(name) — ready for local generation."
+            Logger.info("Imported generator: \(name) (\(resolvedFormat.rawValue))")
+        } catch {
+            try? FileManager.default.removeItem(at: staging)
+            importStatusMessage = nil
+            downloadErrorMessage = "Import failed: \(error.localizedDescription)"
+            Logger.error("Model import failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Backward-compatible single-item entry point used by older screens.
+    @MainActor
+    public func importLocalModel(url: URL, format: AIModel.ModelFormat? = nil) {
+        importLocalModels(urls: [url], format: format)
+    }
+
+    private static func copyImportItem(_ source: URL, into destination: URL, fileManager: FileManager) throws {
+        let ext = source.pathExtension.lowercased()
+        let destinationItem = destination.appendingPathComponent(source.lastPathComponent)
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: source.path, isDirectory: &isDirectory) else {
+            throw NSError(domain: "RepositoryViewModel", code: -22, userInfo: [NSLocalizedDescriptionKey: "The selected item cannot be read."])
+        }
+        if isDirectory.boolValue && (ext == "mlmodelc" || ext == "mlpackage") {
+            try fileManager.copyItem(at: source, to: destinationItem)
+        } else if isDirectory.boolValue {
+            // Flatten one downloaded wrapper folder so Mirage sees the model
+            // weights and companions at the package root.
+            let children = try fileManager.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
+            for child in children {
+                let childDestination = destination.appendingPathComponent(child.lastPathComponent)
+                try? fileManager.removeItem(at: childDestination)
+                try fileManager.copyItem(at: child, to: childDestination)
+            }
+        } else {
+            try fileManager.copyItem(at: source, to: destinationItem)
+        }
     }
 
     /// Best-effort format inference from a file or folder extension.

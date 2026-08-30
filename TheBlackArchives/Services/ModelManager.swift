@@ -22,28 +22,7 @@ public final class ModelManager {
             // otherwise a stale partial download would be marked "installed"
             // and fed straight into the generator.
             let allowedExts = ["gguf", "safetensors", "ckpt", "bin", "mlmodelc", "mlpackage", "mlmodel"]
-            guard let contents = try? fileManager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.fileSizeKey]) else {
-                return false
-            }
-            return contents.contains { fileURL in
-                let ext = fileURL.pathExtension.lowercased()
-                guard allowedExts.contains(ext), !fileURL.lastPathComponent.hasSuffix(".part") else { return false }
-                var isFile: ObjCBool = false
-                _ = fileManager.fileExists(atPath: fileURL.path, isDirectory: &isFile)
-                if isFile.boolValue {
-                    // CoreML model packages are directories.
-                    return ext == "mlmodelc" || ext == "mlpackage"
-                }
-                let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                guard size > 0 else { return false }
-                // A .safetensors with a corrupt header (truncated download, bad
-                // chunk splice) is NOT installed — it would fail to load in the
-                // engine and block a clean re-download.
-                if ext == "safetensors" {
-                    return Self.isValidSafetensorsHeader(at: fileURL)
-                }
-                return true
-            }
+            return Self.hasUsableModelFiles(at: url, fileManager: fileManager)
         }
 
         // Single-file layout: the path itself is the weight file.
@@ -56,6 +35,27 @@ public final class ModelManager {
             return Self.isValidSafetensorsHeader(at: url)
         }
         return true
+    }
+
+    /// Recursively finds a supported, non-empty generator file or Core ML package.
+    /// Downloaded model folders often contain one extra wrapper directory, so
+    /// validation intentionally walks the package rather than only its top level.
+    public static func hasUsableModelFiles(at url: URL, fileManager: FileManager = .default) -> Bool {
+        let allowedExts = ["gguf", "safetensors", "ckpt", "bin", "mlmodelc", "mlpackage", "mlmodel"]
+        guard let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey]) else { return false }
+        for case let item as URL in enumerator {
+            let ext = item.pathExtension.lowercased()
+            guard allowedExts.contains(ext), !item.lastPathComponent.hasSuffix(".part") else { continue }
+            let values = try? item.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+            if values?.isDirectory == true {
+                if ext == "mlmodelc" || ext == "mlpackage" { return true }
+                continue
+            }
+            guard (values?.fileSize ?? 0) > 0 else { continue }
+            if ext == "safetensors" && !isValidSafetensorsHeader(at: item) { continue }
+            return true
+        }
+        return false
     }
 
     /// Cheap structural validation of a `.safetensors` file: the first 8 bytes
