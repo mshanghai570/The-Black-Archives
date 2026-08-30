@@ -214,17 +214,23 @@ public final class HuggingFaceService {
     /// Internally this prefers parallel ranged downloads when the server
     /// supports HTTP Range requests, and falls back to single-stream when it
     /// does not. Partial downloads are preserved and resumed across retries.
+    ///
+    /// - Parameter expectedSize: known byte size of the file (e.g. from the
+    ///   repo manifest). Lets the single-stream fallback report real progress
+    ///   even when the CDN streams the body without a Content-Length, and
+    ///   enables the final size check that catches silent truncation.
     public func downloadFile(
         repoId: String,
         filename: String,
         to destination: URL,
+        expectedSize: Int64? = nil,
         onProgress: @escaping (Double, Int64, Int64) -> Void
     ) async throws {
         let resolveURLString = "https://huggingface.co/\(repoId)/resolve/main/\(filename)"
         guard let url = URL(string: resolveURLString) else { throw URLError(.badURL) }
 
         let manager = ModelDownloadManager(session: session, concurrencyLimit: 6)
-        let stream = manager.download(url: url, destination: destination)
+        let stream = manager.download(url: url, destination: destination, expectedSize: expectedSize)
 
         do {
             for try await progress in stream {

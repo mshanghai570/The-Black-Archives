@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "blackarchives 1.png",
+      "filename" : "IMG_2863.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "blackarchives.png",
+      "filename" : "IMG_2863 1.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -25,7 +25,7 @@
           "value" : "tinted"
         }
       ],
-      "filename" : "blackarchives 2.png",
+      "filename" : "IMG_2863 2.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"

@@ -114,7 +114,12 @@ public final class RepositoryViewModel: ObservableObject {
                 let weight = weights[index]
                 let destURL = destDir.appendingPathComponent(file.filename)
                 downloadStatus = "Downloading \(file.filename)"
-                try await hfService.downloadFile(repoId: repoId, filename: file.filename, to: destURL) { [weak self] fraction, receivedBytes, totalBytes in
+                try await hfService.downloadFile(
+                    repoId: repoId,
+                    filename: file.filename,
+                    to: destURL,
+                    expectedSize: file.size > 0 ? file.size : nil
+                ) { [weak self] fraction, receivedBytes, totalBytes in
                     Task { @MainActor in
                         guard let self else { return }
                         // Use actual bytes received for progress when available,

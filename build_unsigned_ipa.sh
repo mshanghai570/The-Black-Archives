@@ -1,10 +1,16 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Build an UNSIGNED Release IPA of The Black Archives for iOS devices.
+# No code signing is required (the project is configured with
+# CODE_SIGNING_ALLOWED=NO). The local Mirage framework is used as-is.
+set -euo pipefail
 
-PROJECT_DIR="/Users/michaelshingara/Downloads/the-black-archives"
-cd "$PROJECT_DIR"
+cd "$(dirname "$0")"   # repo root
 
-echo "=== Building for generic iOS device (Release) ==="
+OUT_DIR="build/ipa"
+APP_PATH="build/Build/Products/Release-iphoneos/TheBlackArchives.app"
+IPA="$OUT_DIR/TheBlackArchives.ipa"
+
+echo "==> Building Release for generic iOS device (unsigned)..."
 xcodebuild -project TheBlackArchives.xcodeproj \
     -scheme TheBlackArchives \
     -configuration Release \
@@ -15,17 +21,18 @@ xcodebuild -project TheBlackArchives.xcodeproj \
     CODE_SIGNING_ALLOWED=NO \
     build
 
-echo "=== Creating unsigned IPA ==="
-APP_PATH="build/Build/Products/Release-iphoneos/TheBlackArchives.app"
 if [ ! -d "$APP_PATH" ]; then
-    echo "ERROR: .app not found at $APP_PATH"
+    echo "ERROR: .app not found at $APP_PATH" >&2
     exit 1
 fi
 
-mkdir -p Payload
+echo "==> Creating unsigned IPA..."
+mkdir -p "$OUT_DIR" Payload
+rm -rf Payload/TheBlackArchives.app "$IPA"
 cp -R "$APP_PATH" Payload/
-zip -r TheBlackArchives.ipa Payload/TheBlackArchives.app
+zip -r "$IPA" Payload/TheBlackArchives.app > /dev/null
 rm -rf Payload
 
-echo "=== IPA created: $PROJECT_DIR/TheBlackArchives.ipa ==="
-ls -lh TheBlackArchives.ipa
+echo "==> Done: $IPA"
+ls -lh "$IPA"
+unzip -l "$IPA" | tail -3

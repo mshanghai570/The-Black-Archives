@@ -2,8 +2,4 @@ module CMirage {
     header "MirageC.h"
     export *
     link "c++"
-    link framework "Metal"
-    link framework "MetalKit"
-    link framework "Foundation"
-    link framework "Accelerate"
 }

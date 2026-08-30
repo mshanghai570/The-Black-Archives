@@ -107,14 +107,16 @@ private extension ModelDownloadManager {
 
     private actor ProgressAccumulator {
         private let totalSize: Int64
-        private var totalReceived: Int64 = 0
+        private var totalReceived: Int64
         private var startTime: Date = Date()
         private var lastReportTime: Date = Date()
-        private var lastReportedBytes: Int64 = 0
+        private var lastReportedBytes: Int64
         private let onProgress: ProgressCallback
 
-        init(totalSize: Int64, onProgress: @escaping ProgressCallback) {
+        init(totalSize: Int64, initialReceived: Int64 = 0, onProgress: @escaping ProgressCallback) {
             self.totalSize = totalSize
+            self.totalReceived = initialReceived
+            self.lastReportedBytes = initialReceived
             self.onProgress = onProgress
         }
 
@@ -211,28 +213,64 @@ private extension ModelDownloadManager {
             }
         }
 
+        // HF `resolve/main/...` URLs 302 to a CDN; follow the redirect once so
+        // every subsequent request — size probe, ranged chunks, resume — hits
+        // the same host that answered the first one. Some CDNs drop the
+        // `Range` header when a request is redirected mid-flight, which would
+        // make ranged GETs come back as 200 (whole file) and corrupt chunks.
+        let downloadURL: URL
+        do {
+            downloadURL = try await resolveFinalURL(url: url)
+        } catch {
+            // HEAD probe failed (some CDNs reject it); ranged GETs on the
+            // original URL may still work, so degrade rather than fail.
+            downloadURL = url
+        }
+
         let supportsRange: Bool
         do {
-            supportsRange = try await detectRangeSupport(url: url)
+            supportsRange = try await detectRangeSupport(url: downloadURL)
         } catch {
             supportsRange = false
         }
 
         if supportsRange {
-            try await downloadWithParallelChunks(
-                url: url,
-                destination: destination,
-                expectedSize: expectedSize,
-                onProgress: onProgress
-            )
+            do {
+                try await downloadWithParallelChunks(
+                    url: downloadURL,
+                    destination: destination,
+                    expectedSize: expectedSize,
+                    onProgress: onProgress
+                )
+            } catch let error as NSError where error.code == -11 || error.code == -12 {
+                // The CDN wouldn't reveal a file size, so chunk boundaries
+                // can't be planned. Degrade to the single-stream path (which
+                // still reports progress from `expectedSize` when the caller
+                // supplied it) instead of failing a download that could
+                // otherwise complete.
+                try await downloadWithSingleStream(
+                    url: downloadURL,
+                    destination: destination,
+                    expectedSize: expectedSize,
+                    onProgress: onProgress
+                )
+            }
         } else {
             try await downloadWithSingleStream(
-                url: url,
+                url: downloadURL,
                 destination: destination,
                 expectedSize: expectedSize,
                 onProgress: onProgress
             )
         }
+    }
+
+    /// Follows redirects and returns the final URL the CDN resolved to.
+    private func resolveFinalURL(url: URL) async throws -> URL {
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        let (_, response) = try await session.data(for: request)
+        return response.url ?? url
     }
 
     func downloadWithParallelChunks(
@@ -262,7 +300,10 @@ private extension ModelDownloadManager {
         let chunkSpecs = calculateChunks(fileSize: fileSize, concurrency: concurrencyLimit)
         let chunks = loadExistingChunks(chunks: chunkSpecs, tempDir: tempDir)
 
-        let accumulator = ProgressAccumulator(totalSize: fileSize, onProgress: onProgress)
+        // Seed progress with bytes already on disk from a resumed download so
+        // the fraction reflects reality instead of restarting from 0.
+        let completedBytes = chunks.filter { $0.state == .complete }.reduce(Int64(0)) { $0 + $1.length }
+        let accumulator = ProgressAccumulator(totalSize: fileSize, initialReceived: completedBytes, onProgress: onProgress)
 
         let incomplete = chunks.filter { $0.state != .complete }
         guard !incomplete.isEmpty else {
@@ -351,13 +392,20 @@ private extension ModelDownloadManager {
         onProgress: @escaping ProgressCallback
     ) async throws {
         let partialURL = destination.appendingPathExtension("part")
-        var resumeOffset: Int64
+        // A `.part` left behind by a previous parallel-chunked attempt is a
+        // *directory* of chunk files. Writing through an OutputStream to a
+        // directory fails instantly — discard it so this fallback starts clean.
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: partialURL.path, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            try? FileManager.default.removeItem(at: partialURL)
+        }
+        var resumeOffset: Int64 = 0
         if let attrs = try? FileManager.default.attributesOfItem(atPath: partialURL.path),
+           (attrs[.type] as? FileAttributeType) == .typeRegular,
            let size = attrs[.size] as? Int64,
            size > 0 {
             resumeOffset = size
-        } else {
-            resumeOffset = 0
         }
 
         var request = URLRequest(url: url)
@@ -404,7 +452,7 @@ private extension ModelDownloadManager {
             return 0
         }()
 
-        let accumulator = ProgressAccumulator(totalSize: totalSize, onProgress: onProgress)
+        let accumulator = ProgressAccumulator(totalSize: totalSize, initialReceived: resumeOffset, onProgress: onProgress)
         var received = resumeOffset
         var buffer = Data()
         let chunkSize = 64 * 1024
@@ -687,23 +735,32 @@ private extension ModelDownloadManager {
         var request = URLRequest(url: url)
         request.httpMethod = "HEAD"
         let (_, response) = try await session.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw NSError(
-                domain: "ModelDownloadManager",
-                code: -11,
-                userInfo: [NSLocalizedDescriptionKey: "Cannot determine remote file size."]
-            )
+        if let httpResponse = response as? HTTPURLResponse,
+           (200...299).contains(httpResponse.statusCode),
+           httpResponse.expectedContentLength >= 0 {
+            return Int64(httpResponse.expectedContentLength)
         }
-        let length = httpResponse.expectedContentLength
-        guard length >= 0 else {
-            throw NSError(
-                domain: "ModelDownloadManager",
-                code: -12,
-                userInfo: [NSLocalizedDescriptionKey: "Remote file size is unknown."]
-            )
+        // Some CDNs (e.g. Xet) answer HEAD without Content-Length. Probe with
+        // a 1-byte ranged GET: a 206 must carry Content-Range, whose total is
+        // authoritative even when the body is chunked.
+        var ranged = URLRequest(url: url)
+        ranged.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        let (_, rangeResponse) = try await session.data(for: ranged)
+        if let http = rangeResponse as? HTTPURLResponse {
+            if http.statusCode == 206,
+               let cr = http.value(forHTTPHeaderField: "Content-Range"),
+               let parsed = Self.parseContentRange(cr), parsed.total > 0 {
+                return parsed.total
+            }
+            if (200...299).contains(http.statusCode), http.expectedContentLength >= 0 {
+                return Int64(http.expectedContentLength)
+            }
         }
-        return Int64(length)
+        throw NSError(
+            domain: "ModelDownloadManager",
+            code: -12,
+            userInfo: [NSLocalizedDescriptionKey: "Remote file size is unknown."]
+        )
     }
 
     func checkDiskSpace(url: URL, expectedSize: Int64) throws -> Bool {
@@ -751,7 +808,14 @@ private extension ModelDownloadManager {
     /// splice bytes from two different downloads into one corrupt file.
     private func ensureValidTempDirectory(tempDir: URL, url: URL, fileSize: Int64, concurrency: Int) {
         let markerURL = tempDir.appendingPathComponent(".download-meta.json")
-        if FileManager.default.fileExists(atPath: tempDir.path) {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: tempDir.path, isDirectory: &isDirectory)
+        if exists && !isDirectory.boolValue {
+            // A leftover single-stream `.part` *file* occupies the chunk-dir
+            // path. It cannot hold chunks — remove it so the directory (and
+            // its marker) can be created below.
+            try? FileManager.default.removeItem(at: tempDir)
+        } else if exists {
             var isValid = false
             if FileManager.default.fileExists(atPath: markerURL.path),
                let data = try? Data(contentsOf: markerURL),
