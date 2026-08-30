@@ -242,12 +242,14 @@ private extension ModelDownloadManager {
                     expectedSize: expectedSize,
                     onProgress: onProgress
                 )
-            } catch let error as NSError where error.code == -11 || error.code == -12 {
-                // The CDN wouldn't reveal a file size, so chunk boundaries
-                // can't be planned. Degrade to the single-stream path (which
-                // still reports progress from `expectedSize` when the caller
-                // supplied it) instead of failing a download that could
-                // otherwise complete.
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Some proxies advertise Range but fail on one of the CDN
+                // redirects. Preserve a useful path to completion instead of
+                // making the user retry a multi-GB download from scratch.
+                let partialDir = destination.appendingPathExtension("part")
+                try? FileManager.default.removeItem(at: partialDir)
                 try await downloadWithSingleStream(
                     url: downloadURL,
                     destination: destination,
@@ -297,7 +299,7 @@ private extension ModelDownloadManager {
         let tempDir = destination.appendingPathExtension("part")
         ensureValidTempDirectory(tempDir: tempDir, url: url, fileSize: fileSize, concurrency: concurrencyLimit)
 
-        let chunkSpecs = calculateChunks(fileSize: fileSize, concurrency: concurrencyLimit)
+        let chunkSpecs = calculateChunks(fileSize: fileSize, concurrency: concurrencyLimit, tempDir: tempDir)
         let chunks = loadExistingChunks(chunks: chunkSpecs, tempDir: tempDir)
 
         // Seed progress with bytes already on disk from a resumed download so
@@ -725,7 +727,6 @@ private extension ModelDownloadManager {
     func detectRangeSupport(url: URL) async throws -> Bool {
         var request = URLRequest(url: url)
         request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
-        request.httpMethod = "HEAD"
         let (_, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { return false }
         return httpResponse.statusCode == 206
@@ -733,28 +734,27 @@ private extension ModelDownloadManager {
 
     func getFileSize(url: URL) async throws -> Int64 {
         var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
+        request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
         let (_, response) = try await session.data(for: request)
         if let httpResponse = response as? HTTPURLResponse,
            (200...299).contains(httpResponse.statusCode),
-           httpResponse.expectedContentLength >= 0 {
+           httpResponse.expectedContentLength > 0 {
             return Int64(httpResponse.expectedContentLength)
         }
-        // Some CDNs (e.g. Xet) answer HEAD without Content-Length. Probe with
-        // a 1-byte ranged GET: a 206 must carry Content-Range, whose total is
-        // authoritative even when the body is chunked.
+        // Some CDNs answer without Content-Length. A 1-byte ranged GET
+        // returns an authoritative total in Content-Range.
         var ranged = URLRequest(url: url)
         ranged.setValue("bytes=0-0", forHTTPHeaderField: "Range")
         let (_, rangeResponse) = try await session.data(for: ranged)
-        if let http = rangeResponse as? HTTPURLResponse {
-            if http.statusCode == 206,
-               let cr = http.value(forHTTPHeaderField: "Content-Range"),
-               let parsed = Self.parseContentRange(cr), parsed.total > 0 {
-                return parsed.total
-            }
-            if (200...299).contains(http.statusCode), http.expectedContentLength >= 0 {
-                return Int64(http.expectedContentLength)
-            }
+        if let http = rangeResponse as? HTTPURLResponse,
+           http.statusCode == 206,
+           let cr = http.value(forHTTPHeaderField: "Content-Range"),
+           let parsed = Self.parseContentRange(cr), parsed.total > 0 {
+            return parsed.total
+        }
+        if let http = rangeResponse as? HTTPURLResponse,
+           (200...299).contains(http.statusCode), http.expectedContentLength > 0 {
+            return Int64(http.expectedContentLength)
         }
         throw NSError(
             domain: "ModelDownloadManager",
@@ -776,7 +776,7 @@ private extension ModelDownloadManager {
         return actualSize == expectedSize
     }
 
-    private func calculateChunks(fileSize: Int64, concurrency: Int) -> [Chunk] {
+    private func calculateChunks(fileSize: Int64, concurrency: Int, tempDir: URL) -> [Chunk] {
         guard fileSize > 0 else { return [] }
 
         let minChunkSize: Int64 = 16 * 1024 * 1024
@@ -785,9 +785,6 @@ private extension ModelDownloadManager {
         let ideal = fileSize / max(Int64(concurrency), 1)
         let chunkSize = min(maxChunkSize, max(minChunkSize, ideal))
         let count = Int((fileSize + chunkSize - 1) / chunkSize)
-        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent(UUID().uuidString)
-
         var chunks: [Chunk] = []
         var offset: Int64 = 0
         for index in 0..<count {

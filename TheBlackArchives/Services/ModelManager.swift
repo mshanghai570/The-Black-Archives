@@ -34,7 +34,18 @@ public final class ModelManager {
         if ext == "safetensors" {
             return Self.isValidSafetensorsHeader(at: url)
         }
+        if ext == "gguf" {
+            return Self.isValidGGUFHeader(at: url)
+        }
         return true
+    }
+
+    /// Validates the four-byte GGUF magic used by stable-diffusion.cpp.
+    public static func isValidGGUFHeader(at url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 4) else { return false }
+        return data == Data([0x47, 0x47, 0x55, 0x46])
     }
 
     /// Recursively finds a supported, non-empty generator file or Core ML package.
@@ -53,6 +64,7 @@ public final class ModelManager {
             }
             guard (values?.fileSize ?? 0) > 0 else { continue }
             if ext == "safetensors" && !isValidSafetensorsHeader(at: item) { continue }
+            if ext == "gguf" && !isValidGGUFHeader(at: item) { continue }
             return true
         }
         return false

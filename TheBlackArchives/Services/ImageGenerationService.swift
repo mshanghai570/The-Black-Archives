@@ -18,16 +18,9 @@ public final class ImageGenerationService {
         }
         
         if isDirectory.boolValue {
-            // Check if there are any valid model files in the directory
-            let contents = try FileManager.default.contentsOfDirectory(at: modelURL, includingPropertiesForKeys: nil)
-            let hasModelFile = contents.contains { fileURL in
-                let ext = fileURL.pathExtension.lowercased()
-                return ["gguf", "safetensors", "ckpt", "mlmodelc", "mlpackage"].contains(ext)
-            }
-            
-            if !hasModelFile {
+            guard ModelManager.hasUsableModelFiles(at: modelURL) else {
                 throw NSError(domain: "ImageGenerationService", code: -2,
-                              userInfo: [NSLocalizedDescriptionKey: "No valid model files (.gguf, .safetensors, .ckpt, .mlmodelc, .mlpackage) found in \(modelURL.path). The model may not have downloaded completely."])
+                              userInfo: [NSLocalizedDescriptionKey: "No usable model weights found in \(modelURL.path). The download may be incomplete or incompatible."])
             }
         } else {
             // Single-file import: verify the extension is one Mirage can load.
@@ -61,15 +54,9 @@ public final class ImageGenerationService {
         }
         
         if isDirectory.boolValue {
-            let contents = try FileManager.default.contentsOfDirectory(at: modelURL, includingPropertiesForKeys: nil)
-            let hasModelFile = contents.contains { fileURL in
-                let ext = fileURL.pathExtension.lowercased()
-                return ["gguf", "safetensors", "ckpt", "mlmodelc", "mlpackage"].contains(ext)
-            }
-            
-            if !hasModelFile {
+            guard ModelManager.hasUsableModelFiles(at: modelURL) else {
                 throw NSError(domain: "ImageGenerationService", code: -2,
-                              userInfo: [NSLocalizedDescriptionKey: "No valid model files (.gguf, .safetensors, .ckpt, .mlmodelc, .mlpackage) found in \(modelURL.path). The model may not have downloaded completely."])
+                              userInfo: [NSLocalizedDescriptionKey: "No usable model weights found in \(modelURL.path). The download may be incomplete or incompatible."])
             }
         }
 

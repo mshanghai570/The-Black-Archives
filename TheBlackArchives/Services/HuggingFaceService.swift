@@ -20,11 +20,19 @@ public final class HuggingFaceService {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
-        let encodedQuery = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? trimmed
-        let endpoint = "https://huggingface.co/api/models?search=\(encodedQuery)&filter=text-to-image&limit=25"
-        guard let url = URL(string: endpoint) else { throw URLError(.badURL) }
+        var components = URLComponents(string: "https://huggingface.co/api/models")!
+        components.queryItems = [
+            URLQueryItem(name: "search", value: trimmed),
+            URLQueryItem(name: "pipeline_tag", value: "text-to-image"),
+            URLQueryItem(name: "filter", value: "gguf"),
+            URLQueryItem(name: "limit", value: "25")
+        ]
+        guard let url = components.url else { throw URLError(.badURL) }
 
-        let (data, _) = try await session.data(from: url)
+        let (data, response) = try await session.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw NSError(domain: "HuggingFaceService", code: -2, userInfo: [NSLocalizedDescriptionKey: "Hugging Face search failed (HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0))."])
+        }
 
         struct HFModelResponse: Decodable {
             let id: String
@@ -32,25 +40,19 @@ public final class HuggingFaceService {
             let likes: Int?
             let downloads: Int?
             let tags: [String]?
+            let pipelineTag: String?
         }
 
         let hfModels = try JSONDecoder().decode([HFModelResponse].self, from: data)
 
-        return hfModels.map { hf in
+        return hfModels.compactMap { hf in
             let authorName = hf.author ?? "Unknown"
             let nameOnly = hf.id.split(separator: "/").last.map(String.init) ?? hf.id
 
             let tags = hf.tags ?? []
-            var format: AIModel.ModelFormat = .safetensors
-            if tags.contains(where: { $0.lowercased().contains("gguf") }) {
-                format = .gguf
-            } else if tags.contains(where: { $0.lowercased().contains("coreml") }) {
-                format = .coreML
-            } else if tags.contains(where: { $0.lowercased().contains("mlx") }) {
-                format = .mlx
-            } else if tags.contains(where: { $0.lowercased().contains("lora") }) {
-                format = .lora
-            }
+            guard hf.pipelineTag == "text-to-image" || tags.contains("text-to-image") else { return nil }
+            guard tags.contains(where: { $0.lowercased() == "gguf" }) else { return nil }
+            let format: AIModel.ModelFormat = .gguf
 
             let desc = "HuggingFace model · \(hf.likes ?? 0) likes · \(hf.downloads ?? 0) downloads"
 
@@ -70,7 +72,8 @@ public final class HuggingFaceService {
 
     /// Lists every file in a HuggingFace repo (root-level and nested).
     public func listFiles(repoId: String) async throws -> [(filename: String, size: Int64)] {
-        let endpoint = "https://huggingface.co/api/models/\(repoId)"
+        let encodedRepo = repoId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repoId
+        let endpoint = "https://huggingface.co/api/models/\(encodedRepo)"
         guard let url = URL(string: endpoint) else { throw URLError(.badURL) }
 
         var request = URLRequest(url: url)
@@ -226,7 +229,9 @@ public final class HuggingFaceService {
         expectedSize: Int64? = nil,
         onProgress: @escaping (Double, Int64, Int64) -> Void
     ) async throws {
-        let resolveURLString = "https://huggingface.co/\(repoId)/resolve/main/\(filename)"
+        let encodedRepo = repoId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repoId
+        let encodedFilename = filename.split(separator: "/").map { String($0).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? String($0) }.joined(separator: "/")
+        let resolveURLString = "https://huggingface.co/\(encodedRepo)/resolve/main/\(encodedFilename)"
         guard let url = URL(string: resolveURLString) else { throw URLError(.badURL) }
 
         let manager = ModelDownloadManager(session: session, concurrencyLimit: 6)

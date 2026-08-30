@@ -417,39 +417,38 @@ public final class RepositoryViewModel: ObservableObject {
     
     /// Built-in list of models that can be downloaded and run on-device.
     ///
-    /// Every entry points at a real, non-gated HuggingFace repo verified
-    /// against the HF API, and every file is a single self-contained
-    /// checkpoint in the A1111 layout that stable-diffusion.cpp (Mirage)
-    /// loads directly — text encoders + VAE are embedded in the checkpoint,
-    /// so no companion files are needed.
+    /// Every entry points at a public Hugging Face repo verified against the
+    /// HF API. Catalog files are GGUF artifacts published for
+    /// stable-diffusion.cpp/Mirage, avoiding the incompatible Diffusers folder
+    /// layouts that cannot be passed directly to the vendored native loader.
     ///
     /// Generation defaults are tuned per family: SD1.5 is trained at 512px
     /// and wants ~25 steps / CFG ~7; SDXL-family wants 1024px; distilled
     /// models (Turbo) want very few steps and CFG 1.0.
     private static let catalog: [AIModel] = [
-        AIModel(id: "sd-1-5", name: "Stable Diffusion 1.5", author: "Stability AI",
-                description: "Classic 512px latent-diffusion checkpoint. Smallest download, reliable on-device all-rounder.",
-                fileSizeBytes: 4_265_146_304, format: .safetensors, isInstalled: false, isLocalCatalog: true,
-                repoId: "runwayml/stable-diffusion-v1-5",
-                downloadFiles: ["v1-5-pruned-emaonly.safetensors"],
+        AIModel(id: "sd-1-5", name: "Stable Diffusion 1.5 · Q4 GGUF", author: "Second State",
+                description: "A real stable-diffusion.cpp GGUF package. Practical 512px starter model for iPhone and iPad.",
+                fileSizeBytes: 2_000_000_000, format: .gguf, isInstalled: false, isLocalCatalog: true,
+                repoId: "second-state/stable-diffusion-v1-5-GGUF",
+                downloadFiles: ["stable-diffusion-v1-5-pruned-emaonly-Q4_0.gguf"],
                 defaultSteps: 25, defaultCfgScale: 7.5, recommendedSize: 512),
-        AIModel(id: "ssd-1b", name: "SSD-1B", author: "Segmind",
-                description: "Distilled SDXL (1.3B UNet). Faster than full SDXL with near-SDXL quality at 1024px.",
-                fileSizeBytes: 4_465_671_322, format: .safetensors, isInstalled: false, isLocalCatalog: true,
-                repoId: "segmind/SSD-1B",
-                downloadFiles: ["SSD-1B-A1111.safetensors"],
-                defaultSteps: 25, defaultCfgScale: 6.5, recommendedSize: 1024),
-        AIModel(id: "sdxl-base", name: "SDXL Base 1.0", author: "Stability AI",
-                description: "Full 1024px SDXL base checkpoint. Highest quality, heaviest on-device load.",
-                fileSizeBytes: 6_938_078_334, format: .safetensors, isInstalled: false, isLocalCatalog: true,
-                repoId: "stabilityai/stable-diffusion-xl-base-1.0",
-                downloadFiles: ["sd_xl_base_1.0.safetensors"],
+        AIModel(id: "dreamshaper-xl-turbo", name: "DreamShaper XL Turbo · Q4 GGUF", author: "Offgrid AI",
+                description: "Fast SDXL Turbo-style GGUF checkpoint prepared for stable-diffusion.cpp.",
+                fileSizeBytes: 2_000_000_000, format: .gguf, isInstalled: false, isLocalCatalog: true,
+                repoId: "offgrid-ai/dreamshaper-xl-v2-turbo-GGUF",
+                downloadFiles: ["dreamshaper-xl-v2-turbo-Q4_K.gguf"],
+                defaultSteps: 4, defaultCfgScale: 1.0, recommendedSize: 1024),
+        AIModel(id: "sdxl-base", name: "SDXL Base 1.0 · Q4 GGUF", author: "Kostakoff",
+                description: "Full SDXL base checkpoint in a stable-diffusion.cpp-compatible GGUF package.",
+                fileSizeBytes: 4_000_000_000, format: .gguf, isInstalled: false, isLocalCatalog: true,
+                repoId: "kostakoff/stable-diffusion-xl-base-1.0-GGUF",
+                downloadFiles: ["sd_xl_base_1.0_0_Q4_K.gguf"],
                 defaultSteps: 30, defaultCfgScale: 7.0, recommendedSize: 1024),
-        AIModel(id: "sdxl-turbo", name: "SDXL Turbo", author: "Stability AI",
-                description: "Distilled one-step SDXL. Set steps low (1-4) and CFG 1.0 for near-instant results.",
-                fileSizeBytes: 6_938_081_905, format: .safetensors, isInstalled: false, isLocalCatalog: true,
-                repoId: "stabilityai/sdxl-turbo",
-                downloadFiles: ["sd_xl_turbo_1.0_fp16.safetensors"],
+        AIModel(id: "sdxl-turbo", name: "SDXL Turbo · Q4 GGUF", author: "GPUStack",
+                description: "Distilled SDXL Turbo GGUF package for fast local generation with low step counts.",
+                fileSizeBytes: 3_000_000_000, format: .gguf, isInstalled: false, isLocalCatalog: true,
+                repoId: "gpustack/stable-diffusion-xl-1.0-turbo-GGUF",
+                downloadFiles: ["stable-diffusion-xl-1.0-turbo-Q4_0.gguf"],
                 defaultSteps: 4, defaultCfgScale: 1.0, recommendedSize: 1024)
     ]
     

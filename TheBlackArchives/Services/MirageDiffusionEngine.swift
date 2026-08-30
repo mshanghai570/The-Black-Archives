@@ -30,18 +30,17 @@ public final class MirageDiffusionEngine {
         Logger.info("Mirage diffusion model absolute path: \(diffusionModel.path)")
         Logger.info("Mirage diffusion model path exists: \(FileManager.default.fileExists(atPath: diffusionModel.path))")
 
-        // A single file with no companions is a full checkpoint (the catalog's
-        // A1111 .safetensors bundle UNet + CLIP + VAE). Load it through
-        // `modelPath` so sd.cpp keeps the cond_stage_model.*/first_stage_model.*
-        // tensor names — routing it through `diffusionModel` prefix-renames
-        // them and the load fails. UNet-only weights with companions keep the
-        // three-file layout.
+        // A standalone full checkpoint — including the complete GGUF packages
+        // published for stable-diffusion.cpp — must use `modelPath` so the
+        // native loader preserves the model's embedded tensor names. The
+        // diffusion-model branch is reserved for UNet/transformer weights that
+        // have separate VAE/text-encoder companions.
         let models: ModelFiles
         if vae == nil && textEncoder == nil {
-            Logger.info("Mirage: Single-file checkpoint mode, using modelPath")
+            Logger.info("Mirage: standalone full checkpoint mode, using modelPath")
             models = ModelFiles(diffusionModel: diffusionModel, vae: nil, textEncoder: nil, modelPath: diffusionModel)
         } else {
-            Logger.info("Mirage: Multi-file mode, using diffusionModel + companions")
+            Logger.info("Mirage: diffusion-model mode using native file contract")
             models = ModelFiles(diffusionModel: diffusionModel, vae: vae, textEncoder: textEncoder)
         }
 
@@ -72,10 +71,16 @@ public final class MirageDiffusionEngine {
         // generic "model failed to load". Catch it here with a specific,
         // actionable message instead of letting it surface as a mystery:
         // validate the .safetensors header before handing the file to sd.cpp.
-        if diffusionModel.pathExtension.lowercased() == "safetensors",
+        let diffusionExtension = diffusionModel.pathExtension.lowercased()
+        if diffusionExtension == "safetensors",
            !ModelManager.isValidSafetensorsHeader(at: diffusionModel) {
             throw NSError(domain: "MirageDiffusionEngine", code: -5,
                           userInfo: [NSLocalizedDescriptionKey: "Model file \(diffusionModel.lastPathComponent) is corrupted (invalid safetensors header) at \(diffusionModel.path). Delete the model and download it again."])
+        }
+        if diffusionExtension == "gguf",
+           !ModelManager.isValidGGUFHeader(at: diffusionModel) {
+            throw NSError(domain: "MirageDiffusionEngine", code: -6,
+                          userInfo: [NSLocalizedDescriptionKey: "Model file \(diffusionModel.lastPathComponent) is not a valid GGUF file. The download may be incomplete or incompatible; delete it and download a stable-diffusion.cpp GGUF model."])
         }
 
         do {
